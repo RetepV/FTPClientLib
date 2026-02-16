@@ -1,5 +1,5 @@
 //
-//  FTPConnectionDefinitions.swift
+//  FTPConnection.swift
 //  FTPClient
 //
 //  Created by Peter de Vroomen on 09-02-2025.
