@@ -87,7 +87,8 @@ struct BorderedChooserView: View {
                     }
                     
                     Picker("Choice", selection: $selected) {
-                        ForEach(choices.sorted(), id: \.self) { choice in
+//                        ForEach(choices.sorted(), id: \.self) { choice in
+                        ForEach(choices, id: \.self) { choice in
                             Text(choice).tag(choice)
                         }
                     }
@@ -145,6 +146,11 @@ struct BorderedChooserView: View {
             }
         }
         .ignoresSafeArea(edges: .all)
+        .task {
+            if !choices.isEmpty {
+                selected = choices.first!
+            }
+        }
     }
 }
 

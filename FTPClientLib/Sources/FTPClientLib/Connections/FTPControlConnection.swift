@@ -49,7 +49,6 @@ actor FTPControlConnection: Sendable {
                                                                                                       lower: ipv4UserAddressRangeLowerBound,
                                                                                                       upper: ipv4UserAddressRangeUpperBound)
     
-    private var isReceiving: Bool = false
     private var receivedData: Data = Data()
     
     // MARK: - Public

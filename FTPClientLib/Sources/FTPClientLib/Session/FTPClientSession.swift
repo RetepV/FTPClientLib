@@ -76,9 +76,9 @@ public actor FTPClientSession : Sendable, Observable {
     
     public func close() async throws {
         
-        guard sessionState == .opened, controlConnection != nil else {
-            Self.logger.info("FTPClientSession: Trying to close a session that is not open")
-            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not opened"])
+        guard (sessionState == .opened) || (sessionState == .idle), controlConnection != nil else {
+            Self.logger.info("FTPClientSession: Trying to close a session that is not idle")
+            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not idle"])
         }
         
         sessionState = .closing
@@ -142,8 +142,8 @@ public actor FTPClientSession : Sendable, Observable {
     
     private func doControlCommandOnly(_ command: some FTPCommand) async throws -> FTPCommandResult {
         
-        guard sessionState == .opened, let controlConnection else {
-            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection"])
+        guard (sessionState == .opened) || (sessionState == .idle), let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
         }
         
         guard let commandString = command.commandString, commandString.isEmpty == false else {
@@ -161,8 +161,8 @@ public actor FTPClientSession : Sendable, Observable {
     
     private func doReceiveWithActiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
         
-        guard sessionState == .opened, let controlConnection else {
-            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection"])
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
         }
         
         guard let commandString = command.commandString, commandString.isEmpty == false else {
@@ -172,94 +172,147 @@ public actor FTPClientSession : Sendable, Observable {
         guard command.sourceOrDestinationType != .none else {
             throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Source or destination should not be .none here"])
         }
-        
-        // For the listener IP address, we pass the IP address of the control connection. The control connection
-        // is connected and has a local IP address, which means that it can reach the server, and has the highest
-        // chance that the server can reach it back.
-        guard let listenerIPAddress = await controlConnection.localIPAddress else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No IP address available"])
-        }
-        let listenerIPPort = await controlConnection.nextFreeIPPort
-        
-        // Set up data connection for listening. This must be done before sending the PORT command, so
-        // that we have already reserved the IP port. We only start listening, we only wait for a connection
-        // after having sent the actual command.
-        
-        let dataConnection = try await FTPDataConnection(session: self)
-        try await dataConnection.listen(port: listenerIPPort)
-        
-        // Send the PORT command.
-        
-        let ftpPORTCommand = FTPPORTCommand(ipAddress: listenerIPAddress, ipPort: listenerIPPort, chainedCommand: command)
-        try await controlConnection.sendCommand(ftpPORTCommand)
-        
-        let ftpPORTReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-        
-        guard await ftpPORTReply.code == FTPResponseCodes.commandOk,
-              let message = await ftpPORTReply.message else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Failed to enter active mode (\(await ftpPORTReply.code ?? -1), \(await ftpPORTReply.message ?? "unknown"))"])
-        }
-        
-        // Send the actual command.
-        
+                
+        // Set up the active data connection and start listening for connections.
+        let dataConnection = try await makeActiveDataConnection()
+
+        // Send actual command.
         try await controlConnection.sendCommand(command)
+        
+        // Wait for the server to connect to the data connection.
         try await dataConnection.waitForConnection(timeout: FTPClientLibDefaults.timeoutInSecondsForListen)
                 
-        // TODO: There is a bunch of code duplication here because of the use of 'async let'.
-        // TODO: Maybe a taskGroup would make for nicer code?
-
-        var commandResult: FTPCommandResult = .init(code: 0, message: nil, data: nil)
-
-        if command.sourceOrDestinationType == .file, let fileURL = command.fileURL {
-            async let ftpCommandReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-            async let ftpDataReply = try await dataConnection.receiveToFile(fileURL: fileURL)
-            
-            commandResult = FTPCommandResult(code: try await ftpCommandReply.code,
-                                             message: try await ftpCommandReply.message,
-                                             data: try await ftpDataReply)
-        }
-        else if command.sourceOrDestinationType == .memory {
-            async let ftpCommandReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-            async let ftpDataReply = try await dataConnection.receiveInMemory()
-            
-            commandResult = FTPCommandResult(code: try await ftpCommandReply.code,
-                                             message: try await ftpCommandReply.message,
-                                             data: try await ftpDataReply)
-        }
-        
-        return commandResult
+        // Read all the data.
+        return try await doActualReceive(command: command, dataConnection: dataConnection)
     }
     
     private func doReceiveWithPassiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
         
-        guard sessionState == .opened, let controlConnection else {
-            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection"])
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
         }
         
         guard let commandString = command.commandString, commandString.isEmpty == false else {
             throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Empty or no commandString"])
         }
         
-        let ftpPASVCommand = FTPPASVCommand(chainedCommand: command)
-        try await controlConnection.sendCommand(ftpPASVCommand)
+        // Make the passive data connection.
+        let dataConnection = try await makePassiveDataConnection()
         
-        let ftpPASVReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
+        // Send the actual command.
+        try await controlConnection.sendCommand(command)
+        
+        // Read all the data.
+        return try await doActualReceive(command: command, dataConnection: dataConnection)
+    }
+    
+    private func doSendWithActiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
+        
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
+        }
+        
+        guard let commandString = command.commandString, commandString.isEmpty == false else {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Empty or no commandString"])
+        }
+        
+        // Set up the active data connection and start listening for connections.
+        let dataConnection = try await makeActiveDataConnection()
+        
+        // Send actual command.
+        try await controlConnection.sendCommand(command)
+        
+        // Wait for the server to connect to the data connection.
+        try await dataConnection.waitForConnection(timeout: FTPClientLibDefaults.timeoutInSecondsForListen)
+        
+        // Send the data.
+        return try await doActualSend(command: command, dataConnection: dataConnection)
+    }
+
+    private func doSendWithPassiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
+        
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
+        }
+        
+        guard let commandString = command.commandString, commandString.isEmpty == false else {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Empty or no commandString"])
+        }
+        
+        if command.sourceOrDestinationType == .file && (command.localFileURL == nil || !command.localFileURL!.isFileURL) {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Destination type is .file but fileURL not given or is not a FileURL"])
+        }
+        else if command.sourceOrDestinationType == .memory && command.data == nil {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Destination type is .memory, but data is nil"])
+        }
+        
+        // Make the passive data connection.
+        let dataConnection = try await makePassiveDataConnection()
+        
+        // Send the actual command
+        try await controlConnection.sendCommand(command)
+        
+        // Send the data.
+        return try await doActualSend(command: command, dataConnection: dataConnection)
+    }
+    
+    private func makeActiveDataConnection() async throws -> FTPDataConnection {
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
+        }
+        
+        // A system can have multiple IP addresses. For the listener IP address, we pass the IP address of the control connection.
+        // The control connection is connected and has a local IP address, which means that it can reach the server, and has the
+        // highest chance that the server can reach it back.
+        guard let listenerIPAddress = await controlConnection.localIPAddress else {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No IP address available"])
+        }
+        let listenerIPPort = await controlConnection.nextFreeIPPort
+        
+        // Set up data connection to listen.
+        let dataConnection = try await FTPDataConnection(session: self)
+        try await dataConnection.listen(port: listenerIPPort)
+        
+        // Send the PORT command with the listener address and port.
+        let ftpPORTCommand = FTPPORTCommand(ipAddress: listenerIPAddress, ipPort: listenerIPPort)
+        try await controlConnection.sendCommand(ftpPORTCommand)
+        let ftpPORTReply = try await controlConnection.receiveReply(commandGroup: ftpPORTCommand.commandGroup)
+        guard await ftpPORTReply.code == FTPResponseCodes.commandOk,
+        let message = await ftpPORTReply.message else {
+            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Failed to enter active mode (\(await ftpPORTReply.code ?? -1), \(await ftpPORTReply.message ?? "unknown"))"])
+        }
+        
+        return dataConnection
+    }
+    
+    private func makePassiveDataConnection() async throws -> FTPDataConnection {
+        
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
+        }
+        
+        // Send PASV command to get the ip address and port for the data connection.
+        let ftpPASVCommand = FTPPASVCommand()
+        try await controlConnection.sendCommand(ftpPASVCommand)
+        let ftpPASVReply = try await controlConnection.receiveReply(commandGroup: ftpPASVCommand.commandGroup)
         guard await ftpPASVReply.code == FTPResponseCodes.enteringPassiveMode,
               let message = await ftpPASVReply.message else {
             throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Failed to enter passive mode (\(await ftpPASVReply.code ?? -1), \(await ftpPASVReply.message ?? "unknown"))"])
         }
         let (serverIPAddress, serverIPPort) = try FTPPASVReplyParser.parse(message: message)
         
+        // Make the data connection.
         let dataConnection = try await FTPDataConnection(session: self)
-        
         try await dataConnection.connect(address: serverIPAddress, port: serverIPPort)
-        
-        try await controlConnection.sendCommand(command)
-        
-        
-        // TODO: There is a bunch of code duplication here because of the use of 'async let'.
-        // TODO: Maybe a taskGroup would make for nicer code?
-                
+
+        return dataConnection
+    }
+    
+    private func doActualReceive(command: some FTPCommand, dataConnection: FTPDataConnection) async throws -> FTPCommandResult {
+
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
+        }
         
         var commandResult: FTPCommandResult = FTPCommandResult(code: -1, message: "Unknown error", data: nil)
         var done: Bool = false
@@ -276,7 +329,7 @@ public actor FTPClientSession : Sendable, Observable {
                     
                     switch command.sourceOrDestinationType {
                     case .file:
-                        if let fileURL = command.fileURL {
+                        if let fileURL = command.localFileURL {
                             do {
                                 taskGroup.addTask { try await dataConnection.receiveToFile(fileURL: fileURL) }
                             }
@@ -287,7 +340,7 @@ public actor FTPClientSession : Sendable, Observable {
                             }
                         }
                         else {
-                            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Asked to send a file, but no filename was given"])
+                            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Asked to receive a file, but no local filename was given"])
                         }
                     case .memory:
                         do {
@@ -344,135 +397,40 @@ public actor FTPClientSession : Sendable, Observable {
         return commandResult
     }
     
-    private func doSendWithActiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
-        
-        guard sessionState == .opened, let controlConnection else {
-            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection"])
-        }
-        
-        guard let commandString = command.commandString, commandString.isEmpty == false else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Empty or no commandString"])
-        }
-        
-        // For the listener IP address, we pass the IP address of the control connection. The control connection
-        // is connected and has a local IP address, which means that it can reach the server, and has the highest
-        // chance that the server can reach it back.
-        guard let listenerIPAddress = await controlConnection.localIPAddress else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No IP address available"])
-        }
-        let listenerIPPort = await controlConnection.nextFreeIPPort
-        
-        // Set up data connection for listening. This must be done before sending the PORT command, so
-        // that we have already reserved the IP port. We only start listening, we only wait for a connection
-        // after having sent the actual command.
-        
-        let dataConnection = try await FTPDataConnection(session: self)
-        try await dataConnection.listen(port: listenerIPPort)
 
-        // Send the PORT command.
+    
+    private func doActualSend(command: some FTPCommand, dataConnection: FTPDataConnection) async throws -> FTPCommandResult {
         
-        let ftpPORTCommand = FTPPORTCommand(ipAddress: listenerIPAddress, ipPort: listenerIPPort, chainedCommand: command)
-        try await controlConnection.sendCommand(ftpPORTCommand)
-
-        let ftpPORTReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-        
-        guard await ftpPORTReply.code == FTPResponseCodes.commandOk,
-        let message = await ftpPORTReply.message else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Failed to enter active mode (\(await ftpPORTReply.code ?? -1), \(await ftpPORTReply.message ?? "unknown"))"])
-        }
-
-        // Send the actual command.
-        
-        try await controlConnection.sendCommand(command)
-        try await dataConnection.waitForConnection(timeout: FTPClientLibDefaults.timeoutInSecondsForListen)
-        
-        var commandResult: FTPCommandResult = .init(code: 0, message: nil, data: nil)
-
-        if command.sourceOrDestinationType == .file, let fileURL = command.fileURL {
-            async let ftpCommandReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-            async let _ = try await dataConnection.send(fileURL)
-
-            commandResult = FTPCommandResult(code: try await ftpCommandReply.code,
-                                             message: try await ftpCommandReply.message,
-                                             data: nil)
-        }
-        else if command.sourceOrDestinationType == .memory, let data = command.data {
-            async let ftpCommandReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-            async let _ = try await dataConnection.send(data)
-            
-            commandResult = FTPCommandResult(code: try await ftpCommandReply.code,
-                                             message: try await ftpCommandReply.message,
-                                             data: nil)
+        guard sessionState == .idle, let controlConnection else {
+            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection or session not idle"])
         }
         
-        return commandResult
-    }
-
-    private func doSendWithPassiveDataConnection(_ command: some FTPCommand) async throws -> FTPCommandResult {
-        
-        guard sessionState == .opened, let controlConnection else {
-            throw FTPError(.unknown, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: No control connection"])
-        }
-        
-        guard let commandString = command.commandString, commandString.isEmpty == false else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Empty or no commandString"])
-        }
-        
-        if command.sourceOrDestinationType == .file && (command.fileURL == nil || !command.fileURL!.isFileURL) {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Destination type is .file but fileURL not given or is not a FileURL"])
-        }
-        else if command.sourceOrDestinationType == .memory && command.data == nil {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Destination type is .memory, but data is nil"])
-        }
-
-        let ftpPASVCommand = FTPPASVCommand(chainedCommand: command)
-        try await controlConnection.sendCommand(ftpPASVCommand)
-        
-        let ftpPASVReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
-        guard await ftpPASVReply.code == FTPResponseCodes.enteringPassiveMode,
-        let message = await ftpPASVReply.message else {
-            throw FTPError(.commandFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Failed to enter passive mode (\(await ftpPASVReply.code ?? -1), \(await ftpPASVReply.message ?? "unknown"))"])
-        }
-        let (serverIPAddress, serverIPPort) = try FTPPASVReplyParser.parse(message: message)
-        
-        let dataConnection = try await FTPDataConnection(session: self)
-        
-        try await dataConnection.connect(address: serverIPAddress, port: serverIPPort)
-
-        try await controlConnection.sendCommand(command)
-
         var commandResult: FTPCommandResult = FTPCommandResult(code: -1, message: "Unknown error", data: nil)
         var done: Bool = false
 
         while !done {
-            
-            // DONE.
-            
             let ftpCommandReply = try await controlConnection.receiveReply(commandGroup: command.commandGroup)
             
-            // For 'simpleExtended', a reply code in the range of [100..<200] is valid.
+            // TODO: We should really be stepping through a state machine base on the reply codes. Now
+            // TODO: we just check reply code groups and execute commands based on if there is an error
+            // TODO: or not. But the reply codes are more subtle than that, and now we can't apply that
+            // TODO: subtlety. This should not be hardcoded.
             
-            // TODO: The reply codes should really cause us to step through a state machine. The state
-            // TODO: machine differs between commands, and should not be hardcoded here.
-            // TODO:
-            // TODO: Maybe we can define a bunch of fixed states, put a 'nextState' function in every
-            // TODO: FTPxxxCommand, and so control steppingthrough the different states necessary for
-            // TODO: different commands? It does make a bit of sense, in terms of responsibility.
-            // TODO: It does mean that the call to `receiveReply` has to return exactly one reply at a
-            // TODO: time, which might need changes to the parser.
-            // TODO: Can we do these things in a nice Swift Concurrency type of way?
+            // TODO: For now this is not the best implementation. It works, but it should be the FTPxxxCommand's
+            // TODO: responsibility to decide what is a 'good' replyCode or a 'bad' replyCode.
             
-            // TODO: For now this is a bad implementation, just for testing purposes.
+            // TODO: Maybe we can have a function 'nextStep(for: replyCode' in the FTPxxxCommands. That function
+            // TODO: can then return steps like 'startUpload', 'startDownload', 'reportError', 'continue', etc,
+            // TODO: instructing this functions to do things, while the decision logic will be inside the
+            // TODO: FTPxxxCommand.
             
             let replyCode = await ftpCommandReply.code ?? -1
             
             if command.commandGroup == .simpleExtended && replyCode >= 100 && replyCode < 200 {
-                
                 // This is an intermediate result returned by a .simpleExtended command.
-                
                 switch command.sourceOrDestinationType {
                 case .file:
-                    if let fileURL = command.fileURL {
+                    if let fileURL = command.localFileURL {
                         do {
                             try await dataConnection.send(fileURL)
                         }
@@ -509,21 +467,14 @@ public actor FTPClientSession : Sendable, Observable {
                 done = true
             }
             else if replyCode >= 200 && replyCode < 300 {
-                
                 // This is a success result. Return it to our caller.
-                
                 commandResult = FTPCommandResult(code: await ftpCommandReply.code,
                                                  message: await ftpCommandReply.message,
                                                  data: nil)
                 done = true
             }
             else {
-             
                 // This is a failure result. Return it to our caller.
-                
-                // NOTE: This is doing the same as the success result, but we keep it separate for now
-                // NOTE: for testing purposes.
-                
                 commandResult = FTPCommandResult(code: await ftpCommandReply.code,
                                                  message: await ftpCommandReply.message,
                                                  data: nil)

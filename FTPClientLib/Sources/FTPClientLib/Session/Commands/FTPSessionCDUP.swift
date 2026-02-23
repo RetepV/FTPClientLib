@@ -13,9 +13,9 @@ extension FTPClientSession {
     
     public func changeToParentDirectory() async throws -> FTPSessionCDUPResult {
         
-        guard sessionState == .opened, controlConnection != nil else {
-            Self.logger.info("Trying to change to parent directory for a session that is not open")
-            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not open"])
+        guard sessionState == .idle, controlConnection != nil else {
+            Self.logger.info("Trying to change to parent directory for a session that is not idle")
+            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not idle"])
         }
         
         await commandExecutionLock.wait()
@@ -24,8 +24,7 @@ extension FTPClientSession {
         let ftpCDUPCommandResult = try await performCommand(FTPCDUPCommand())
 
         switch await ftpCDUPCommandResult.code {
-        case FTPResponseCodes.requestedFileActionOk:
-            
+        case FTPResponseCodes.requestedFileActionOk, FTPResponseCodes.pathNameCreated:            
             return FTPSessionCDUPResult(result: .success,
                                        code: await ftpCDUPCommandResult.code,
                                        message: await ftpCDUPCommandResult.message)

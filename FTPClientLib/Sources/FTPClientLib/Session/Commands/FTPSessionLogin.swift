@@ -22,6 +22,13 @@ extension FTPClientSession {
         defer {commandExecutionLock.signal()}
 
         let result = try await performUSERCommand(username: username, password: password, account: account)
+        
+        if result.result == .success {
+            sessionState = .idle
+        }
+        else {
+            sessionState = .failed(FTPError(.loginFailed, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Login failed: \(result.message)"]))
+        }
 
         return result
     }

@@ -37,8 +37,8 @@ struct BorderedLoggingView: View {
         }
         .defaultScrollAnchor(.top, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
         .background(backgroundColor)
         .cornerRadius(6)
         .shadow(color: .black, radius: 3, x: 2, y: 2  )

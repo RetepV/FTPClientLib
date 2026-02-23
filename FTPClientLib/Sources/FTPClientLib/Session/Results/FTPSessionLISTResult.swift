@@ -6,7 +6,7 @@
 //
 
 public actor FTPSessionLISTResult {
-
+    
     public enum Result: Sendable {
         case unknown
         case failure
@@ -35,6 +35,12 @@ public actor FTPSessionLISTResult {
             (item.unixFiletype != .directory)
             ? nil
             : item
+        }
+    }
+    
+    public func filesOnly() -> [FTPFileListItem]? {
+        return files?.compactMap { item in
+            item.unixFiletype == .regular ? item : nil
         }
     }
 }

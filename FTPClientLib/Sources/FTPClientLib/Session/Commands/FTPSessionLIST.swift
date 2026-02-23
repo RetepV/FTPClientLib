@@ -13,9 +13,9 @@ extension FTPClientSession {
     
     public func list(path: String? = nil) async throws -> FTPSessionLISTResult {
         
-        guard sessionState == .opened, controlConnection != nil else {
+        guard sessionState == .idle, controlConnection != nil else {
             Self.logger.info("Trying to fetch directory of a session that is not open")
-            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not open"])
+            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not idle"])
         }
         
         await commandExecutionLock.wait()
@@ -24,6 +24,11 @@ extension FTPClientSession {
         let ftpLISTCommandResult = try await performCommand(FTPLISTCommand(path: path))
 
         switch await ftpLISTCommandResult.code {
+            
+            // -=- fileStatusOK should not be handled here, or at least should not cause us to return a result yet, because we will
+            // -=- receive more, and should only stop on 2xx results.
+            // -=- But the performCommand should already have not returned the 150 in the first place. This is for ACTIVE mode.
+            
         case FTPResponseCodes.fileStatusOK,
             FTPResponseCodes.fileActionCompleted,
             FTPResponseCodes.requestedFileActionOk:

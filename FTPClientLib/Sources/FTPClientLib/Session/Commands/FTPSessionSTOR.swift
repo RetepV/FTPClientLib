@@ -11,17 +11,18 @@ extension FTPClientSession {
     
     // MARK; - Public
     
-    public func storeFile(fileURL: URL) async throws -> FTPSessionSTORResult {
+    public func storeFile(fileURL: URL, remotePath: String? = nil) async throws -> FTPSessionSTORResult {
         
-        guard sessionState == .opened, controlConnection != nil else {
-            Self.logger.info("Trying to change directory for a session that is not open")
-            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not open"])
+        guard sessionState == .idle, controlConnection != nil else {
+            Self.logger.info("Trying to change directory for a session that is not idle")
+            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not idle"])
         }
         
         await commandExecutionLock.wait()
         defer {commandExecutionLock.signal()}
         
-        let ftpSTORCommandResult = try await performCommand(FTPSTORCommand(fileURL: fileURL))
+        let ftpSTORCommandResult = try await performCommand(FTPSTORCommand(remotePath: remotePath ?? fileURL.lastPathComponent,
+                                                                           localFileURL: fileURL))
 
         switch await ftpSTORCommandResult.code {
         case FTPResponseCodes.fileActionCompleted, FTPResponseCodes.requestedFileActionOk:

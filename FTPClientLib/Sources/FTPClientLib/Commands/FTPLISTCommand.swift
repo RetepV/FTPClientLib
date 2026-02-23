@@ -54,12 +54,4 @@ struct FTPLISTCommand: FTPCommand {
     var sourceOrDestinationType: FTPSourceOrDestinationType {
         .memory
     }
-    
-    var fileURL: URL? {
-        nil
-    }
-    
-    var data: Data? {
-        nil
-    }
 }

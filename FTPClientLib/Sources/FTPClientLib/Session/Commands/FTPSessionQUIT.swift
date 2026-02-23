@@ -13,9 +13,9 @@ extension FTPClientSession {
     
     public func logout() async throws -> FTPSessionQUITResult {
         
-        guard sessionState == .opened, controlConnection != nil else {
-            Self.logger.info("Trying to log a user out of a session that is not open")
-            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not open"])
+        guard sessionState == .idle, controlConnection != nil else {
+            Self.logger.info("Trying to log a user out of a session that is not idle")
+            throw FTPError(.notOpened, userinfo: [NSLocalizedDescriptionKey : "FTPClientSession: Session not idle"])
         }
         
         await commandExecutionLock.wait()

@@ -1,5 +1,5 @@
 //
-//  FTPSTORCommand.swift
+//  FTPRETRCommand.swift
 //  FTPClientLib
 //
 //  Created by Peter de Vroomen on 05-01-2026.
@@ -7,11 +7,11 @@
 
 import Foundation
 
-struct FTPSTORCommand: FTPCommand {
+struct FTPRETRCommand: FTPCommand {
 
     // MARK: - Private
     
-    private let _command = "STOR"
+    private let _command = "RETR"
     
     private let _remotePath: String
     private let _localFileURL: URL
@@ -19,13 +19,13 @@ struct FTPSTORCommand: FTPCommand {
     // MARK: - Lifecycle
     
     init(remotePath: String, localFileURL: URL) {
-        self._localFileURL = localFileURL
         self._remotePath = remotePath
+        self._localFileURL = localFileURL
     }
 
     // MARK: - FTPCommand protocol
     
-    // 125, 150, (110), 226, 250, 425, 426, 451, 551, 552, 532, 450, 452, 553, 500, 501, 421, 530
+    // 125, 150, (110), 226, 250, 425, 426, 451, 450, 550, 501, 421, 530
     let expectedResponseCodes: [Int] = [
         FTPResponseCodes.dataConnectionAlreadyOpen,
         FTPResponseCodes.fileStatusOK,
@@ -36,24 +36,22 @@ struct FTPSTORCommand: FTPCommand {
         FTPResponseCodes.connectionClosedAbnormally,
         
         FTPResponseCodes.actionAbortedLocalErrorInProcessing,
-        FTPResponseCodes.actionAbortedPageTypeNotRecognized,
-        FTPResponseCodes.actionAbortedInsufficientStorage,
-        FTPResponseCodes.needAccountForStoringFiles,
         FTPResponseCodes.fileActionNotTakenFileUnavailable,
+        FTPResponseCodes.actionNotTakenFileUnavailable,
 
         FTPResponseCodes.actionNotTakenFileNameNotAllowed,
-        FTPResponseCodes.syntaxErrorUnrecognizedCommand,
+        
         FTPResponseCodes.syntaxErrorInParameters,
         FTPResponseCodes.serviceNotAvailableClosingControlConnection,
         FTPResponseCodes.notLoggedIn
     ]
 
     var commandString: String? {
-        _command.appending(" \(_localFileURL.lastPathComponent)\r\n")
+        _command.appending(" \(_remotePath)\r\n")
     }
 
     var commandType: FTPCommandType {
-        .sendWithDataConnection
+        .receiveWithDataConnection
     }
     
     var commandGroup: FTPCommandGroup {
@@ -67,7 +65,7 @@ struct FTPSTORCommand: FTPCommand {
     var remotePath: String {
         _remotePath
     }
-
+    
     var localFileURL: URL? {
         _localFileURL
     }

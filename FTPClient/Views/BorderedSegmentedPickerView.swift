@@ -15,6 +15,7 @@ struct BorderedSegmentedPickerView<T>: View where T: Hashable {
     let labelColor: Color
     let segment: (backgroundColor: Color, borderColor: Color)
     let disabled: Bool
+    let didSelect: ((T) -> Void)?
     
     var body: some View {
         VStack {
@@ -35,6 +36,9 @@ struct BorderedSegmentedPickerView<T>: View where T: Hashable {
                             withAnimation(Animation.easeInOut) {
                                 if !disabled {
                                     selected = label.value
+                                    if let didSelect {
+                                        didSelect(label.value)
+                                    }
                                 }
                             }
                         }
@@ -75,6 +79,8 @@ struct PickerSegmentView: View {
                                      ? (disabled ? label.labelColor.opacity(0.3) : label.labelColor)
                                      : label.labelColor.opacity(disabled ? 0.1 : 0.5))
                     .padding(.all, 8)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: 22)
             }
         }
         .background(segment.backgroundColor)
@@ -101,5 +107,6 @@ struct PickerSegmentView: View {
                                      selected: $selectedLabel,
                                      labelColor: .black,
                                      segment: (.yellow, .black),
-                                     disabled: disabled)
+                                     disabled: disabled,
+                                     didSelect: nil)
 }

@@ -41,7 +41,8 @@ protocol FTPCommand : CustomStringConvertible, Sendable {
     
     var sourceOrDestinationType: FTPSourceOrDestinationType { get }
     
-    var fileURL: URL? { get }
+    var remotePath: String? { get }
+    var localFileURL: URL? { get }
     var data: Data? { get }
 }
 
@@ -54,4 +55,17 @@ extension FTPCommand {
         
         return "Unknown Command"
     }
+    
+    var remotePath: String? {
+        nil
+    }
+    
+    var localFileURL: URL? {
+        nil
+    }
+    
+    var data: Data? {
+        nil
+    }
+
 }

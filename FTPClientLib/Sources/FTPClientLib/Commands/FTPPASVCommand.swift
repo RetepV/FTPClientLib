@@ -12,12 +12,10 @@ struct FTPPASVCommand: FTPCommand {
     // MARK: - Private
     
     private let _command = "PASV"
-    private let _chainedCommand: FTPCommand
 
     // MARK: - Lifecycle
     
-    init(chainedCommand: FTPCommand) {
-        self._chainedCommand = chainedCommand
+    init() {
     }
 
     // MARK: - FPTCommand protocol
@@ -46,13 +44,5 @@ struct FTPPASVCommand: FTPCommand {
     
     var sourceOrDestinationType: FTPSourceOrDestinationType {
         .none
-    }
-    
-    var fileURL: URL? {
-        nil
-    }
-    
-    var data: Data? {
-        nil
     }
 }

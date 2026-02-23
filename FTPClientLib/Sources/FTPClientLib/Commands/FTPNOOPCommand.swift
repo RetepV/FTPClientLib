@@ -1,17 +1,17 @@
 //
-//  FTPPWDCommand.swift
+//  FTPNOOPCommand.swift
 //  FTPClientLib
 //
-//  Created by Peter de Vroomen on 05-01-2026.
+//  Created by Peter de Vroomen on 22-02-2026.
 //
 
 import Foundation
 
-struct FTPCDUPCommand: FTPCommand {
+struct FTPNOOPCommand: FTPCommand {
 
     // MARK: - Private
     
-    private let _command = "CDUP"
+    private let _command = "NOOP"
 
     // MARK: - Lifecycle
     
@@ -20,18 +20,11 @@ struct FTPCDUPCommand: FTPCommand {
 
     // MARK: - FTPCommand protocol
     
-    // 200, 500, 501, 502, 421, 550, 530
-    // NOTE: Some servers seem to return 257 for success, so add that too.
+    // 200, 500, 421
     let expectedResponseCodes: [Int] = [
         FTPResponseCodes.commandOk,
         FTPResponseCodes.syntaxErrorUnrecognizedCommand,
-        FTPResponseCodes.syntaxErrorInParameters,
-        FTPResponseCodes.commandNotImplemented,
         FTPResponseCodes.serviceNotAvailableClosingControlConnection,
-        FTPResponseCodes.actionNotTakenFileUnavailable,
-        FTPResponseCodes.notLoggedIn,
-        
-        FTPResponseCodes.pathNameCreated        // demo.wftpserver.com returns this in case of success.
     ]
 
     var commandString: String? {

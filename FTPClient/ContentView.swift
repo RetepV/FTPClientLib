@@ -12,40 +12,69 @@ import FTPClientLib
 internal import UniformTypeIdentifiers
 
 let defaultServerName = "demo.wftpserver.com"
+let defaultUserName = "demo"
+let defaultUserPassword = "demo"
 let defaultServerPort = "21"
-let defaultUsername = "demo"
-let defaultPassword = "demo"
 
 struct ContentView: View {
     
+    enum FocusedTextField {
+        case serverName
+        case serverPort
+        case userName
+        case userPassword
+    }
+    
+    struct FileImporterContext {
+        let allowedContentTypes: [UTType]
+        let onCompletion: (Result<URL, Error>) -> Void
+    }
+    
+    @FocusState private var focusedField: FocusedTextField?
+    
     @State private var ftpClientSession: FTPClientSession? = nil
-
+    
     @State private var showConnectionOpening: Bool = false
     @State private var showConnectionOpened: Bool = false
     @State private var showConnectionClosing: Bool = false
     @State private var showConnectionError: Bool = false
+    @State private var showDownloadError: Bool = false
     @State private var showAskForDirectory: Bool = false
-    @State private var showAskForUploadFile: Bool = false
-    
-    @State private var directories: [String] = []
+    @State private var showAskForRemoteDownloadFile: Bool = false
+    @State private var showDownloadSucceeded: Bool = false
+
+    @State private var filesInCurrentDirectory: [String] = []
+    @State private var directoriesInCurrentDirectory: [String] = []
+
+    @State private var showFileImporter: Bool = false
+    @State private var fileImporterContext: FileImporterContext = FileImporterContext(allowedContentTypes: [], onCompletion: { _ in })
+
     @State private var directoryToChangeTo: String = ""
+    @State private var remoteFileToDownload: String = ""
 
     @State private var hasOpenConnection: Bool = false
-    
+    @State private var isLoggedIn: Bool = false
+
     @State private var openResult: FTPSessionOpenResult? = nil
     
     @State private var connectionError: FTPError? = nil
+    @State private var downloadError: FTPError? = nil
     
     @State private var serverName: String = ""
     @State private var serverPort: String = ""
+    @State private var userName: String = ""
+    @State private var userPassword: String = ""
 
     @State private var filePath: String = ""
-
+    
     @State private var logLines: [String] = []
     
     @State private var dataConnectionModes: [(String, FTPDataConnectionMode)] = [("Active", .active), ("Passive", .passive)]
     @State private var dataConnectionMode: FTPDataConnectionMode = .active
-
+    
+    @State private var dataTransferTypes: [(String, FTPTypeCode)] = [("IMAGE", .image), ("ASCII", .ascii)]
+    @State private var dataTransferType: FTPTypeCode = .image
+    
     @Environment(\.modelContext) private var modelContext
     @Query private var items: [Item]
     
@@ -57,7 +86,7 @@ struct ContentView: View {
         }
         return URL(string: "ftp://\(server):\(port)")
     }
-
+    
     var body: some View {
         VStack {
             
@@ -65,67 +94,33 @@ struct ContentView: View {
                 VStack(alignment: .leading) {
                     HStack(alignment: .center) {
                         Text("Server:")
-                            .frame(width: 60, alignment: Alignment.leading)
-                        TextField(text: $serverName) {
-                            Text(defaultServerName)
-                        }
-                        .padding(.horizontal, 4)
-                        .background(.gray.opacity(0.2))
-                        .cornerRadius(6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(.black, lineWidth: 1)
-                        )
+                            .frame(width: 100, alignment: Alignment.leading)
+                        BorderedTextField(placeHolder: defaultServerName, text: $serverName)
+                            .focused($focusedField, equals: .serverName)
                     }
                     
                     HStack(alignment: .center) {
                         Text("Port:")
-                            .frame(width: 60, alignment: Alignment.leading)
-
-                        HStack() {
-                            
-                            TextField("", text: $serverPort, prompt: Text(defaultServerPort))
-                                .frame(width: 50)
-                                .padding(.horizontal, 4)
-                                .background(.gray.opacity(0.2))
-                                .cornerRadius(6)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(.black, lineWidth: 1)
-                                )
-                            
-                            HStack {
-                                Spacer()
-                                
-                                Button {
-                                    if let fullServerURL {
-                                        createAndOpenFTPSession(url: fullServerURL, dataConnectionMode: dataConnectionMode)
-                                    }
-                                } label: {
-                                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                                       label: (label: "Connect", labelColor: .black),
-                                                       badge: nil,
-                                                       disabled: fullServerURL == nil || hasOpenConnection,
-                                                       emphasized: false)
-                                }
-                                
-                                Button {
-                                    Task {
-                                        if let ftpClientSession, await ftpClientSession.sessionState == .opened {
-                                            closeFTPSession()
-                                        }
-                                    }
-                                } label: {
-                                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                                       label: (label: "Disconnect", labelColor: .black),
-                                                       badge: nil,
-                                                       disabled: !hasOpenConnection,
-                                                       emphasized: false)
-                                }
-                            }
-                        }
+                            .frame(width: 100, alignment: Alignment.leading)
+                        BorderedTextField(placeHolder: defaultServerPort, text: $serverPort)
+                            .frame(width: 50)
+                            .focused($focusedField, equals: .serverPort)
                     }
                     
+                    HStack(alignment: .center) {
+                        Text("Username:")
+                            .frame(width: 100, alignment: Alignment.leading)
+                        BorderedTextField(placeHolder: defaultUserName, text: $userName)
+                            .focused($focusedField, equals: .userName)
+                    }
+
+                    HStack(alignment: .center) {
+                        Text("Password:")
+                            .frame(width: 100, alignment: Alignment.leading)
+                        BorderedTextField(placeHolder: defaultUserPassword, text: $userPassword)
+                            .focused($focusedField, equals: .userPassword)
+                    }
+
                     HStack(alignment: .center) {
                         Text("Connection mode: ")
                         
@@ -135,92 +130,209 @@ struct ContentView: View {
                                                                            selected: $dataConnectionMode,
                                                                            labelColor: .black,
                                                                            segment: (.yellow, .black),
-                                                                           disabled: hasOpenConnection)
+                                                                           disabled: hasOpenConnection,
+                                                                           didSelect: { _ in
+                            focusedField = nil
+                        })
+                    }
+                    
+                    HStack() {
+
+                        Button {
+                            focusedField = nil
+                            if let fullServerURL {
+                                createAndOpenFTPSession(url: fullServerURL, dataConnectionMode: dataConnectionMode)
+                            }
+                        } label: {
+                            BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                               label: (label: "Connect", labelColor: .black),
+                                               badge: nil,
+                                               disabled: fullServerURL == nil || hasOpenConnection,
+                                               emphasized: false)
+                        }
+                        
+                        Button {
+                            focusedField = nil
+                            Task {
+                                let sessionState = await ftpClientSession?.sessionState
+                                if let sessionState, (sessionState == .opened) || (sessionState == .idle) {
+                                    closeFTPSession()
+                                }
+                            }
+                        } label: {
+                            BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                               label: (label: "Disconnect", labelColor: .black),
+                                               badge: nil,
+                                               disabled: !hasOpenConnection,
+                                               emphasized: false)
+                        }
+                                                
+                        Spacer()
+
+                        Button {
+                            focusedField = nil
+                            if userName.isEmpty {
+                                userName = defaultUserName
+                            }
+                            if userPassword.isEmpty {
+                                userPassword = defaultUserPassword
+                            }
+                            login(username: userName, password: userPassword)
+                        } label: {
+                            BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                               label: (label: "Login", labelColor: .black),
+                                               badge: nil,
+                                               disabled: !hasOpenConnection || isLoggedIn,
+                                               emphasized: false)
+                        }
                     }
                 }
             }
             .padding(.horizontal)
+            
+            Divider()
 
+            HStack {
+                Text("Data transfer type: ")
+                
+                Spacer()
+                
+                BorderedSegmentedPickerView<FTPTypeCode>(labels: dataTransferTypes,
+                                                         selected: $dataTransferType,
+                                                         labelColor: .black,
+                                                         segment: (.yellow, .black),
+                                                         disabled: !isLoggedIn,
+                                                         didSelect: { type in
+                    focusedField = nil
+                    setTransferType(type)
+                })
+            }
+            .padding(Edge.Set.horizontal, 16)
+            
             Divider()
             
-            HStack {
-                
-                Button {
-                    login(username: defaultUsername, password: defaultPassword)
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "Login", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
+            VStack {
+                HStack {
+                    Button {
+                        focusedField = nil
+                        fetchCurrentDirListing()
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "LIST", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Button {
+                        focusedField = nil
+                        getCurrentWorkingDirectory()
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "PWD", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Button {
+                        focusedField = nil
+                        showAskForDirectory = true
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "CWD", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Button {
+                        focusedField = nil
+                        changeToParentDirectory()
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "CDUP", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Button {
+                        focusedField = nil
+                        sendNoOperation()
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "NOOP", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Spacer()
                 }
-                
-                Button {
-                    fetchCurrentDirListing()
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "LIST", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
-                }
+                .padding(Edge.Set.horizontal, 16)
 
-                Button {
-                    getCurrentWorkingDirectory()
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "PWD", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
-                }
-                
-                Button {
-                    showAskForDirectory = true
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "CWD", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
-                }
+                Divider()
 
-                Button {
-                    changeToParentDirectory()
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "CDUP", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
+                HStack {
+                                        
+                    Button {
+                        focusedField = nil
+                        fileImporterContext = FileImporterContext(allowedContentTypes: [.data], onCompletion: { result in
+                            switch result {
+                            case .success(let url):
+                                uploadFile(url)
+                            case .failure(let error):
+                                print("ERROR! \(error)")
+                            }
+                        })
+                        showFileImporter = true
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "STOR", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Button {
+                        focusedField = nil
+                        showAskForRemoteDownloadFile = true
+                    } label: {
+                        BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
+                                           label: (label: "RETR", labelColor: .black),
+                                           badge: nil,
+                                           disabled: !isLoggedIn,
+                                           emphasized: false)
+                    }
+                    
+                    Spacer()
                 }
-
-                Button {
-                    showAskForUploadFile = true
-                } label: {
-                    BorderedButtonView(button: (backgroundColor: .yellow, borderColor: .black),
-                                       label: (label: "STOR", labelColor: .black),
-                                       badge: nil,
-                                       disabled: !hasOpenConnection,
-                                       emphasized: false)
-                }
+                .padding(Edge.Set.horizontal, 16)
             }
-
+            
             Divider()
-
+            
             BorderedLoggingView(lines: $logLines)
                 .font(Font.custom("IBM 3270 Condensed", size: 12))
+
+            Color.clear
+                .frame(height: 16)
             
-            Spacer()
-        }
-        .fileImporter(isPresented: $showAskForUploadFile, allowedContentTypes: [.data]) { result in
-            switch result {
-            case .success(let url):
-                uploadFile(url)
-            case .failure(let error):
-                print("ERROR! \(error)")
+            HStack {
+                Spacer()
+
+                Button {
+                    focusedField = nil
+                    logLines.removeAll()
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(Color.black)
+                }
             }
+            .padding(Edge.Set.horizontal, 16)
         }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: fileImporterContext.allowedContentTypes, onCompletion: fileImporterContext.onCompletion)
         .overlay(content: {
             if showConnectionError, let error = connectionError {
                 BorderedInfoView(
@@ -254,8 +366,32 @@ struct ContentView: View {
                         self.showConnectionOpened = false
                     })
             }
+            else if showDownloadSucceeded {
+                BorderedInfoView(
+                    icon: (icon: .info, backgroundColor: .white),
+                    label: (label: "Download of file \(remoteFileToDownload) succeeded", labelColor: .black),
+                    subLabel: nil,
+                    dismiss: (label: "Dismiss", labelColor: .black, backgroundColor: .yellow),
+                    autoDismiss: (seconds: 5, labelColor: .white, backgroundColor: .brown),
+                    action: {
+                        self.downloadError = nil
+                        self.showDownloadSucceeded = false
+                    })
+            }
+            if showDownloadError, let error = downloadError {
+                BorderedInfoView(
+                    icon: (icon: .error, backgroundColor: .red),
+                    label: (label: "An error occurred while downloading a file", labelColor: .black),
+                    subLabel: (label: "\(remoteFileToDownload)\n\nError: \(error.debugDescription)", labelColor: .black),
+                    dismiss: (label: "Dismiss", labelColor: .black, backgroundColor: .yellow),
+                    autoDismiss: nil,
+                    action: {
+                        showDownloadError = false
+                        self.downloadError = nil
+                    })
+            }
             else if showAskForDirectory {
-                BorderedChooserView(choices: $directories,
+                BorderedChooserView(choices: $directoriesInCurrentDirectory,
                                     selected: $directoryToChangeTo,
                                     icon: (icon: .question, backgroundColor: .white),
                                     label: (label: "Choose a folder", labelColor: .black),
@@ -269,11 +405,42 @@ struct ContentView: View {
                     self.showAskForDirectory = false
                 }))
             }
+            else if showAskForRemoteDownloadFile {
+                BorderedChooserView(choices: $filesInCurrentDirectory,
+                                    selected: $remoteFileToDownload,
+                                    icon: (icon: .question, backgroundColor: .white),
+                                    label: (label: "Choose a file", labelColor: .black),
+                                    subLabel: nil,
+                                    ok: (label: "Ok", labelColor: .black, backgroundColor: .yellow, action: {
+                    self.showAskForRemoteDownloadFile = false
+                    // NOTE: On MacOS, use .directory to select a folder, on iOS we have to use .folder.
+                    fileImporterContext = FileImporterContext(allowedContentTypes: [.folder], onCompletion: { result in
+                        switch result {
+                        case .success(let url):
+                            downloadFile(remoteFileToDownload, localFileURL: url)
+                        case .failure(let error):
+                            print("ERROR! \(error)")
+                        }
+                    })
+                    showFileImporter = true
+                }), cancel: (label: "Cancel", labelColor: .black, backgroundColor: .yellow, action: {
+                    remoteFileToDownload = ""
+                    self.showAskForRemoteDownloadFile = false
+                }))
+            }
         })
+        .task {
+            atStart();
+        }
     }
-
+    
+    private func atStart() {
+        logLines.append("01234567890123456789012345678901234567890123456789012345678901234567890123456789")
+        logLines.append("          1         2         3         4         5         6         7")
+    }
+    
     private func createAndOpenFTPSession(url: URL, dataConnectionMode: FTPDataConnectionMode) {
-
+        
         logLines.append("[creating session with url \(url.absoluteString)]")
         ftpClientSession = FTPClientLib.createSession(url: url)
         
@@ -282,7 +449,7 @@ struct ContentView: View {
             showConnectionOpening = true
             
             let connectionMode = self.dataConnectionMode
-
+            
             Task {
                 logLines.append("[setting data connection mode to \(self.dataConnectionMode)]")
                 await ftpClientSession.setDataConnectionMode(connectionMode)
@@ -292,28 +459,31 @@ struct ContentView: View {
                     openResult = try await ftpClientSession.open()
                 }
                 catch {
-
+                    
                     connectionError = error as? FTPError
+                    
                     hasOpenConnection = false
-
+                    isLoggedIn = false
+                    
                     showConnectionOpening = false
                     showConnectionOpened = false
                     showConnectionError = true
                     
+                    
                     logLines.append("[connection error: \(error)]")
-
+                    
                     return
                 }
                 
                 hasOpenConnection = true
-
+                
                 showConnectionOpening = false
                 showConnectionOpened = true
                 showConnectionError = false
+                
+                logLines.append("[connected successfully]")
 
                 if let openResult {
-
-                    logLines.append("[connected successfully]")
                     if let welcome = await openResult.welcomeMessage {
                         logLines.append("[server welcomes you]")
                         logLines.append(welcome)
@@ -331,8 +501,9 @@ struct ContentView: View {
                 logLines.append("[disconnecting from \(await ftpClientSession.serverURL.absoluteString)]")
                 try await ftpClientSession.close()
                 logLines.append("[disconnected]")
-
+                
                 hasOpenConnection = false
+                isLoggedIn = false
                 
                 showConnectionClosing = false
             }
@@ -348,6 +519,7 @@ struct ContentView: View {
                     logLines.append("[login result is \(await result.result) (\(await result.code != nil ? "\(await result.code!)" : "nil"),\"\(await result.message ?? "nil")\")]")
                     
                     if await result.result == .success {
+                        isLoggedIn = true
                         getCurrentWorkingDirectory()
                         fetchCurrentDirListing()
                     }
@@ -358,6 +530,7 @@ struct ContentView: View {
                 catch {
                     connectionError = error as? FTPError
                     showConnectionError = true
+                    isLoggedIn = false
                 }
             }
         }
@@ -397,7 +570,7 @@ struct ContentView: View {
             }
         }
     }
-
+    
     private func changeToParentDirectory() {
         if let ftpClientSession {
             Task {
@@ -408,6 +581,22 @@ struct ContentView: View {
                     
                     getCurrentWorkingDirectory()
                     fetchCurrentDirListing()
+                }
+                catch {
+                    connectionError = error as? FTPError
+                    showConnectionError = true
+                }
+            }
+        }
+    }
+    
+    private func sendNoOperation() {
+        if let ftpClientSession {
+            Task {
+                do {
+                    logLines.append("[sending 'no operation']")
+                    let result = try await ftpClientSession.noOperation()
+                    logLines.append("\(await result.message ?? "nil")")
                 }
                 catch {
                     connectionError = error as? FTPError
@@ -441,8 +630,10 @@ struct ContentView: View {
                                 logLines.append(fileString)
                             }
                             
-                            directories = await result.foldersOnly(includingDotFolders: false)?.compactMap({$0.filename}) ?? []
-                            directoryToChangeTo = directories.first ?? ""
+                            directoriesInCurrentDirectory = await result.foldersOnly(includingDotFolders: false)?.compactMap({$0.filename}) ?? []
+                            filesInCurrentDirectory = await result.filesOnly()?.compactMap({$0.filename}) ?? []
+                            
+                            directoryToChangeTo = directoriesInCurrentDirectory.first ?? ""     // -=-
                         }
                         else {
                             logLines.append("Empty folder")
@@ -477,11 +668,67 @@ struct ContentView: View {
                 default:
                     break
                 }
-                    
             }
             catch {
                 connectionError = error as? FTPError
                 showConnectionError = true
+            }
+        }
+    }
+    
+    private func downloadFile(_ remotePath: String, localFileURL: URL) {
+        guard let ftpClientSession else { return }
+        
+        Task {
+            do {
+                var localFileURL = localFileURL
+                if localFileURL.lastPathComponent != remotePath {
+                    localFileURL = localFileURL.appending(component: remotePath, directoryHint: URL.DirectoryHint.notDirectory)
+                }
+                logLines.append("[downloading file (remote): \(remotePath), to (local): \(localFileURL)]")
+                let result = try await ftpClientSession.retrieveFile(fileURL: localFileURL, remotePath: remotePath)
+                switch await result.result {
+                case .success:
+                    logLines.append("[successfully downloaded file \(remotePath), message: \(await result.message)]")
+                    getCurrentWorkingDirectory()
+                    fetchCurrentDirListing()
+                    showDownloadSucceeded = true
+                case .failure:
+                    logLines.append("[failed to download file \(remotePath), error: \(await result.message)]")
+                    downloadError = FTPError(FTPError.FTPErrorCode.unknown, userinfo: [NSLocalizedDescriptionKey : "Download failed with message: \(await result.message ?? "nil")"])
+                    showDownloadError = true
+                default:
+                    break
+                }
+            }
+            catch {
+                connectionError = error as? FTPError
+                showConnectionError = true
+            }
+        }
+    }
+    
+    private func setTransferType(_ type: FTPTypeCode) {
+        if let ftpClientSession {
+            Task {
+                do {
+                    logLines.append("[setting type code to \"\(type)\")]")
+                    let result = try await ftpClientSession.setType(type)
+                    switch await result.result {
+                    case .success:
+                        logLines.append("[success, type is now \"\(type)\", message: \(await result.message)]")
+                    case .failure:
+                        logLines.append("[failed to set type to \"\(type)\", error: \(await result.message)]")
+                        downloadError = FTPError(FTPError.FTPErrorCode.unknown, userinfo: [NSLocalizedDescriptionKey : "Failed to set type to \"\(type)\", message: \(await result.message ?? "nil")"])
+                        showDownloadError = true
+                    default:
+                        break
+                    }
+                }
+                catch {
+                    connectionError = error as? FTPError
+                    showConnectionError = true
+                }
             }
         }
     }

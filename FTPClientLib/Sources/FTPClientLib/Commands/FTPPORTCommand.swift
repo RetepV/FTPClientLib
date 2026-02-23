@@ -14,14 +14,12 @@ struct FTPPORTCommand: FTPCommand {
     private let _command = "PORT"
     private let _ipAddress: FTPIPAddress
     private let _ipPort: FTPIPPort
-    private let _chainedCommand: FTPCommand
 
     // MARK: - Lifecycle
     
-    init(ipAddress: FTPIPAddress, ipPort: FTPIPPort, chainedCommand: FTPCommand) {
+    init(ipAddress: FTPIPAddress, ipPort: FTPIPPort) {
         self._ipAddress = ipAddress
         self._ipPort = ipPort
-        self._chainedCommand = chainedCommand
     }
 
     // MARK: - FPTCommand protocol
@@ -53,13 +51,5 @@ struct FTPPORTCommand: FTPCommand {
     
     var sourceOrDestinationType: FTPSourceOrDestinationType {
         .none
-    }
-    
-    var fileURL: URL? {
-        nil
-    }
-    
-    var data: Data? {
-        nil
     }
 }

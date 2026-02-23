@@ -12,7 +12,7 @@ struct FTPUSERCommand : FTPCommand {
     // MARK: - Definitions
     
     private let _command = "USER"
-
+    
     // RFC 959 says to expect 230, 530, 500, 501, 421, 331, 332
     public let expectedResponseCodes: [Int] = [
         FTPResponseCodes.userLoggedIn,
@@ -27,7 +27,7 @@ struct FTPUSERCommand : FTPCommand {
     // MARK: - Private
     
     private let username: String
-
+    
     // MARK: - Lifecycle
     
     init(username: String) {
@@ -39,7 +39,7 @@ struct FTPUSERCommand : FTPCommand {
     var commandString: String? {
         _command.appending(" \(username)\r\n")
     }
-
+    
     var commandType: FTPCommandType {
         .controlConnectionOnly
     }
@@ -50,13 +50,5 @@ struct FTPUSERCommand : FTPCommand {
     
     var sourceOrDestinationType: FTPSourceOrDestinationType {
         .none
-    }
-    
-    var fileURL: URL? {
-        nil
-    }
-    
-    var data: Data? {
-        nil
     }
 }

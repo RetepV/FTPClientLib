@@ -26,6 +26,8 @@ struct BorderedButtonView: View {
                 Text(label.label)
                     .foregroundStyle(disabled ? label.labelColor.opacity(0.3) : label.labelColor)
                     .padding(.all, 8)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(height: 22)
 
                 if !disabled, let badge {
                     Text(badge.label)
@@ -34,7 +36,7 @@ struct BorderedButtonView: View {
                         .background(disabled ? badge.backgroundColor.opacity(0.3) : badge.backgroundColor)
                         .foregroundStyle(badge.labelColor)
                         .clipShape(Capsule())
-                        .offset(x: -8, y: -4)
+                        .offset(x: -8, y: 0)
                 }
             }
         }

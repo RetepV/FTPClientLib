@@ -46,12 +46,4 @@ struct FTPPWDCommand: FTPCommand {
     var sourceOrDestinationType: FTPSourceOrDestinationType {
         .none
     }
-    
-    var fileURL: URL? {
-        nil
-    }
-    
-    var data: Data? {
-        nil
-    }
 }

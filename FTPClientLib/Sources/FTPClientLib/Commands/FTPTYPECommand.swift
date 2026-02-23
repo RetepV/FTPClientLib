@@ -1,5 +1,5 @@
 //
-//  FTPPWDCommand.swift
+//  FTPTYPECommand.swift
 //  FTPClientLib
 //
 //  Created by Peter de Vroomen on 05-01-2026.
@@ -7,35 +7,41 @@
 
 import Foundation
 
-struct FTPCDUPCommand: FTPCommand {
+public enum FTPTypeCode: String, Sendable {
+    case ascii = "A"
+    case image = "I"            // Binary, but it's called 'Image' in RFC-959
+    case ebcdic = "E"           // Not supported, but here for completeness.
+    case local = "L"            // Not supported, but here for completeness.
+}
+
+struct FTPTYPECommand: FTPCommand {
 
     // MARK: - Private
     
-    private let _command = "CDUP"
+    private let _command = "TYPE"
+
+    private let _type: FTPTypeCode
 
     // MARK: - Lifecycle
     
-    init() {
+    init(_ type: FTPTypeCode = .image) {
+        _type = type
     }
 
     // MARK: - FTPCommand protocol
     
-    // 200, 500, 501, 502, 421, 550, 530
-    // NOTE: Some servers seem to return 257 for success, so add that too.
+    // 200, 500, 501, 504, 421, 530
     let expectedResponseCodes: [Int] = [
         FTPResponseCodes.commandOk,
         FTPResponseCodes.syntaxErrorUnrecognizedCommand,
         FTPResponseCodes.syntaxErrorInParameters,
-        FTPResponseCodes.commandNotImplemented,
+        FTPResponseCodes.commandNotImplementedForParameter,
         FTPResponseCodes.serviceNotAvailableClosingControlConnection,
-        FTPResponseCodes.actionNotTakenFileUnavailable,
-        FTPResponseCodes.notLoggedIn,
-        
-        FTPResponseCodes.pathNameCreated        // demo.wftpserver.com returns this in case of success.
+        FTPResponseCodes.notLoggedIn
     ]
 
     var commandString: String? {
-        _command.appending("\r\n")
+        _command.appending(" \(_type.rawValue)\r\n")
     }
 
     var commandType: FTPCommandType {

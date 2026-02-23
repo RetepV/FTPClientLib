@@ -21,6 +21,8 @@ public struct FTPError: Error, CustomDebugStringConvertible {
         
         case connectionFailed
         
+        case loginFailed
+        
         case commandFailed
 
         case credentialsFailed

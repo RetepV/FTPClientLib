@@ -45,7 +45,8 @@ public enum FTPSessionState: Sendable, RawRepresentable {
     case initialised
     case opening
     case opened
-    case loggedIn
+    case idle
+    case busy
     case closing
     case closed
     case failed(Error)
@@ -64,8 +65,10 @@ public enum FTPSessionState: Sendable, RawRepresentable {
             self = .opening
         case ".opened":
             self = .opened
-        case ".loggedIn":
-            self = .loggedIn
+        case ".idle":
+            self = .idle
+        case ".busy":
+            self = .busy
         case ".closing":
             self = .closing
         case ".closed":
@@ -87,8 +90,10 @@ public enum FTPSessionState: Sendable, RawRepresentable {
             return ".opening"
         case .opened:
             return ".opened"
-        case .loggedIn:
-            return ".loggedIn"
+        case .idle:
+            return ".idle"
+        case .busy:
+            return ".busy"
         case .closing:
             return ".closing"
         case .closed:
